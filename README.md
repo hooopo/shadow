@@ -1,2 +1,7 @@
-# shadow
-shadow table.
+# Shadow Table
+
+## What
+
+## Why
+
+## How

@@ -1,5 +1,19 @@
 CREATE SCHEMA IF NOT EXISTS shadow;
 
+CREATE OR REPLACE FUNCTION shadow.quote_ident_with_schema(string text) RETURNS text AS $$
+  DECLARE
+    str text;
+  BEGIN
+    CASE split_part(string, '.', 2)
+    WHEN '' THEN
+       str := quote_ident(string);
+    ELSE 
+       str := quote_ident(split_part(string, '.', 1)) || '.' || quote_ident(split_part(string, '.', 2));
+    END CASE;
+    RETURN str;
+  END
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION shadow.versioning()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -56,12 +70,7 @@ BEGIN
       AND history.attname != sys_period;
 
     EXECUTE ('INSERT INTO ' ||
-      CASE split_part(history_table, '.', 2)
-      WHEN '' THEN
-        quote_ident(history_table)
-      ELSE
-        quote_ident(split_part(history_table, '.', 1)) || '.' || quote_ident(split_part(history_table, '.', 2))
-      END ||
+      shadow.quote_ident_with_schema(history_table) ||
       '(' ||
       array_to_string(commonColumns , ',') ||
       ',' ||
@@ -80,4 +89,47 @@ BEGIN
 
   RETURN OLD;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION shadow.setup(
+  target_table text, 
+  history_table text
+) RETURNS void AS $T1$
+  DECLARE
+    alter_target text;
+    create_history text;
+    create_trigger text;
+  BEGIN
+    alter_target := 'ALTER TABLE %s 
+    ADD COLUMN sys_period tstzrange NOT NULL DEFAULT tstzrange(current_timestamp, null);';
+    alter_target := FORMAT(alter_target, history_table);
+    RAISE INFO 'EXECUTE SQL: %', alter_target;
+    EXECUTE(alter_target);
+
+    create_history := 'CREATE TABLE shadow.%s (
+      LIKE %s INCLUDING DEFAULTS EXCLUDING CONSTRAINTS EXCLUDING INDEXES INCLUDING COMMENTS
+    )';
+
+    create_history := FORMAT(create_history, history_table, target_table);
+    RAISE INFO 'EXECUTE SQL: %', create_history;
+    EXECUTE(create_history);
+
+    EXECUTE(FORMAT('CREATE INDEX ON shadow.%s (id)', history_table));
+
+    create_trigger := 'CREATE TRIGGER zzz_%s_shadow_trigger
+      BEFORE INSERT OR UPDATE OR DELETE ON %s
+      FOR EACH ROW EXECUTE PROCEDURE shadow.versioning(
+        %L, ''shadow.%I'', true
+      )';
+
+    create_trigger := FORMAT(
+      create_trigger, 
+      shadow.quote_ident_with_schema(target_table), 
+      replace(target_table, '.', '_'), 
+      'sys_period', history_table
+    );
+    RAISE INFO 'EXECUTE SQL: %', create_trigger;
+    EXECUTE(create_trigger);
+  END
+$T1$ LANGUAGE plpgsql SECURITY DEFINER;
+
