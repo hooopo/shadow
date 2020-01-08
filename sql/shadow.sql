@@ -75,10 +75,11 @@ BEGIN
       array_to_string(commonColumns , ',') ||
       ',' ||
       quote_ident(sys_period) ||
+      ', op' ||
       ') VALUES ($1.' ||
       array_to_string(commonColumns, ',$1.') ||
-      ',tstzrange($2, $3, ''[)''))')
-       USING OLD, range_lower, time_stamp_to_use;
+      ',tstzrange($2, $3, ''[)''), $4)')
+       USING OLD, range_lower, time_stamp_to_use, LEFT(TG_OP, 1);
   END IF;
 
   IF TG_OP = 'UPDATE' OR TG_OP = 'INSERT' THEN
@@ -115,6 +116,7 @@ CREATE OR REPLACE FUNCTION shadow.setup(
     EXECUTE(create_history);
 
     EXECUTE(FORMAT('CREATE INDEX ON shadow.%s (id)', history_table));
+    EXECUTE(FORMAT('ALTER TABLE shadow.%s ADD COLUMN op CHAR(1) DEFAULT ''U''', history_table));
 
     create_trigger := 'CREATE TRIGGER zzz_%s_shadow_trigger
       BEFORE INSERT OR UPDATE OR DELETE ON %s
