@@ -97,7 +97,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION shadow.setup(
   target_table text, 
-  history_table text
+  history_table text, 
+  primary_key text default 'id'
 ) RETURNS void AS $T1$
   DECLARE
     alter_target text;
@@ -106,7 +107,7 @@ CREATE OR REPLACE FUNCTION shadow.setup(
   BEGIN
     alter_target := 'ALTER TABLE %s 
     ADD COLUMN sys_period tstzrange NOT NULL DEFAULT tstzrange(current_timestamp, null);';
-    alter_target := FORMAT(alter_target, history_table);
+    alter_target := FORMAT(alter_target, target_table);
     RAISE INFO 'EXECUTE SQL: %', alter_target;
     EXECUTE(alter_target);
 
@@ -118,12 +119,12 @@ CREATE OR REPLACE FUNCTION shadow.setup(
     RAISE INFO 'EXECUTE SQL: %', create_history;
     EXECUTE(create_history);
 
-    EXECUTE(FORMAT('CREATE INDEX ON shadow.%s (id)', history_table));
+    EXECUTE(FORMAT('CREATE INDEX ON shadow.%s (%s)', history_table, primary_key));
     EXECUTE(FORMAT('ALTER TABLE shadow.%s ADD COLUMN op CHAR(1) DEFAULT ''U''', history_table));
     EXECUTE(FORMAT('ALTER TABLE shadow.%s ADD COLUMN op_query varchar', history_table));
     EXECUTE(FORMAT('ALTER TABLE shadow.%s ADD COLUMN db_session_user varchar', history_table));
     -- run this in app db connection: select set_config('app.session_user_id', '1', false);
-    -- https://www.postgresql.org/docs/9.5/config-setting.html
+    -- https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SET-TABLE
     EXECUTE(FORMAT('ALTER TABLE shadow.%s ADD COLUMN app_session_user_id varchar', history_table));
     create_trigger := 'CREATE TRIGGER zzz_%s_shadow_trigger
       BEFORE INSERT OR UPDATE OR DELETE ON %s
